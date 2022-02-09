@@ -1,6 +1,7 @@
 import numpy as np
 import tifffile as tif
 
+
 class VoxelView:
     """
     Visualises voxels:
@@ -55,7 +56,6 @@ class VoxelPairView:
         return np.zeros(view_size)
 
     def fill_volume(self):
-
         volume = self.zero_volume()
 
         for pair in self.pairs:

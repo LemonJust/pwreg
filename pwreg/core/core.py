@@ -2,6 +2,12 @@ import numpy as np
 import tifffile as tif
 import ants
 import warnings
+# wsl:
+import sys
+
+project_path = '/mnt/d/Code/repos/gad1b-redistribution'
+sys.path.insert(1, f'{project_path}/src')
+from utils.utils import *
 
 
 class Image:
@@ -79,7 +85,10 @@ class Voxel:
     """
 
     def __init__(self, img, start, size, overlap, idx, num_vox):
+        # measurements in pixels
+        # in ZYX order
         self.start = start
+        # in ZYX order
         self.size = size
         self.idx = idx
         self.num_vox = num_vox
@@ -104,10 +113,10 @@ class VoxelPair:
         self.vox1 = vox1
         self.vox2 = vox2
         # from vox2 to vox1
-        self.alignment = None
+        self.alignment = {}
         self.wrapped = None
 
-    def register(self):
+    def register(self, keep_wrapped=True):
         """
         Registers the voxels, keeps the alignment mat.
         :return:
@@ -117,5 +126,98 @@ class VoxelPair:
         # run ants registration
         reg = ants.registration(fixed=fixed, moving=moving, type_of_transform='Affine',
                                 syn_metric='CC')
-        self.alignment = ants.read_transform(reg['fwdtransforms'][0], dimension=3)
-        self.wrapped = reg['warpedmovout'].numpy().astype(np.uint16)
+        self.alignment['ants'] = ants.read_transform(reg['fwdtransforms'][0], dimension=3)
+        self.alignment['affine'] = ants_to_affine(self.alignment['ants'])
+        if keep_wrapped:
+            self.wrapped = reg['warpedmovout'].numpy().astype(np.uint16)
+
+
+class Points:
+    """ Points class represents and manipulates xyz coords. """
+
+    def __init__(self, xyz_arr, units='pix', resolution=None, idx=None):
+        """ Create a new point at the origin
+        units : in what units the xyz_arr coordinates are given. Can be 'pix' or 'phs'
+        for pixels or physical units respectively.
+        """
+
+        if resolution is None:
+            resolution = [1, 1, 1]
+        self.resolution = np.array(resolution)
+
+        self.xyz = {}
+        if units == 'pix':
+            self.xyz['pix'] = np.array(xyz_arr)
+            self.xyz['phs'] = self.xyz['pix'] * self.resolution
+        elif units == 'phs':
+            self.xyz['phs'] = np.array(xyz_arr)
+            self.xyz['pix'] = np.round(self.xyz['phs'] / self.resolution)
+
+            # personal id for each point
+        if idx is None:
+            self.idx = np.arrange(self.xyz['pix'].shape[0])
+        else:
+            self.idx = idx
+
+    def transform(self, transform, units='phs'):
+        """
+        Applies transform to points in given units , default to physical.
+        transform : a matrix representing an affine transform in 3D.
+        In such format, that to apply transform matrix to a set of xyz1 points : xyz1@transform .
+
+        Returns Points with the same type of dta as the original, but coordinates transformed.
+        """
+
+        def to_xyz1(xyz_arr):
+            n_points = xyz_arr.shape[0]
+            ones = np.ones((1, n_points))
+            return np.r_[xyz_arr, ones]
+
+        xyz = self.xyz[units]
+        xyz1 = to_xyz1(xyz)
+        transformed_xyz1 = xyz1 @ transform
+        transformed_xyz = transformed_xyz1[:, 0:3]
+
+        transformed_points = Points(transformed_xyz, units=units, resolution=self.resolution, idx=self.idx)
+        return transformed_points
+
+    def split(self, voxels):
+        """ Splits points into Voxels
+        Creates a points list in the order, that corresponds to the given voxel list.
+        """
+        points = []
+        for voxel in voxels:
+            x, start_x, end_x = self.xyz['pix'][:, 0], voxel.start[2], voxel.start[2] + voxel.size[2]
+            y, start_y, end_y = self.xyz['pix'][:, 1], voxel.start[1], voxel.start[1] + voxel.size[1]
+            z, start_z, end_z = self.xyz['pix'][:, 2], voxel.start[0], voxel.start[0] + voxel.size[0]
+
+            in_x = start_x <= x <= end_x
+            in_y = start_y <= y <= end_y
+            in_z = start_z <= z <= end_z
+
+            is_inside = np.logical_and(in_z, np.logical_and(in_x, in_y))
+            points.append(Points(self.xyz['phs'][is_inside], units='phs',
+                                 resolution=self.resolution, idx=self.idx[is_inside]))
+
+        return points
+
+
+class PointsPair:
+    def __init__(self, ptc1, ptc2, alignment):
+        self.ptc1 = ptc1
+        self.ptc2 = ptc2
+        self.alignment = alignment
+        self.wrapped = None
+        self.pairs = None
+
+    def align(self):
+        """
+        Registers the point clouds.
+        """
+        self.wrapped = self.ptc2.transform(self.alignment)
+
+    def pair(self):
+        """
+
+        """
+        pass
