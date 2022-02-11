@@ -2,9 +2,8 @@ import numpy as np
 import tifffile as tif
 import ants
 import warnings
-# wsl:
+# on wsl:
 import sys
-
 project_path = '/mnt/d/Code/repos/gad1b-redistribution'
 sys.path.insert(1, f'{project_path}/src')
 from utils.utils import *
@@ -31,11 +30,11 @@ class Image:
         img = tif.imread(self.filename)
         return img
 
-    def split(self, vox_size, overlap):
+    def split(self, blc_size, overlap):
         """
         Prepares a list of voxels for a specific padding and overlap.
         For now the voxels should split the image perfectly.
-        :param vox_size: can be int or 3x1 numpy array representing 3 voxel sides
+        :param blc_size: can be int or 3x1 numpy array representing 3 voxel sides
         :param overlap: can be int or 3x1 numpy array for overlap along 3 voxel sides
         :return: list of voxels of class Voxel
         """
@@ -54,44 +53,44 @@ class Image:
                 raise TypeError("Only integers, whole floats, lists or numpy arrays are allowed")
             return some_input
 
-        vox_size = input_check(vox_size)
+        blc_size = input_check(blc_size)
         overlap = input_check(overlap)
         img_size = np.array(self.shape)
-        # get number of voxels along each dimension
-        num_vox = (img_size - overlap) / (vox_size - overlap)
-        if not np.all([n.is_integer() for n in num_vox]):
+        # get number of blocks along each dimension
+        num_blc = (img_size - overlap) / (blc_size - overlap)
+        if not np.all([n.is_integer() for n in num_blc]):
             warnings.warn(f"Specified voxel size + overlap don't cover the whole image."
-                          f"Image size is {img_size}, voxel size {vox_size},"
-                          f" overlap {overlap} results in {num_vox} number of voxels. Leaving some image. ")
-        num_vox = num_vox.astype(int)
+                          f"Image size is {img_size}, block size {blc_size},"
+                          f" overlap {overlap} results in {num_blc} blocks.\nLeaving some image out. ")
+        num_blc = num_blc.astype(int)
 
-        voxels = []
-        for nz in np.arange(num_vox[0]):
-            # voxel start z pixel
-            tlz = int((vox_size[0] - overlap[0]) * nz)
-            for ny in np.arange(num_vox[1]):
-                # voxel start y pixel
-                tly = int((vox_size[1] - overlap[1]) * ny)
-                for nx in np.arange(num_vox[2]):
-                    # voxel start x pixel
-                    tlx = int((vox_size[2] - overlap[2]) * nx)
-                    voxels.append(Voxel(self, [tlz, tly, tlx], vox_size, overlap, [nz, ny, nx], num_vox))
-        return voxels
+        blocks = []
+        for nz in np.arange(num_blc[0]):
+            # block start z pixel
+            tlz = int((blc_size[0] - overlap[0]) * nz)
+            for ny in np.arange(num_blc[1]):
+                # block start y pixel
+                tly = int((blc_size[1] - overlap[1]) * ny)
+                for nx in np.arange(num_blc[2]):
+                    # block start x pixel
+                    tlx = int((blc_size[2] - overlap[2]) * nx)
+                    blocks.append(Block(self, [tlz, tly, tlx], blc_size, overlap, [nz, ny, nx], num_blc))
+        return blocks
 
 
-class Voxel:
+class Block:
     """
-    Individual voxel information.
+    Individual block information.
     """
 
-    def __init__(self, img, start, size, overlap, idx, num_vox):
+    def __init__(self, img, start, size, overlap, idx, num_blc):
         # measurements in pixels
         # in ZYX order
         self.start = start
         # in ZYX order
         self.size = size
         self.idx = idx
-        self.num_vox = num_vox
+        self.num_blc = num_blc
         self.overlap = overlap
         self.img = img
 
@@ -108,10 +107,10 @@ class Voxel:
         return volume
 
 
-class VoxelPair:
-    def __init__(self, vox1, vox2):
-        self.vox1 = vox1
-        self.vox2 = vox2
+class BlockPair:
+    def __init__(self, blc1, blc2):
+        self.blc1 = blc1
+        self.blc2 = blc2
         # from vox2 to vox1
         self.alignment = {}
         self.wrapped = None
@@ -121,8 +120,8 @@ class VoxelPair:
         Registers the voxels, keeps the alignment mat.
         :return:
         """
-        fixed = ants.from_numpy(self.vox1.crop().astype(float), spacing=self.vox1.img.resolution)
-        moving = ants.from_numpy(self.vox2.crop().astype(float), spacing=self.vox2.img.resolution)
+        fixed = ants.from_numpy(self.blc1.crop().astype(float), spacing=self.blc1.img.resolution)
+        moving = ants.from_numpy(self.blc2.crop().astype(float), spacing=self.blc2.img.resolution)
         # run ants registration
         reg = ants.registration(fixed=fixed, moving=moving, type_of_transform='Affine',
                                 syn_metric='CC')
@@ -181,15 +180,15 @@ class Points:
         transformed_points = Points(transformed_xyz, units=units, resolution=self.resolution, idx=self.idx)
         return transformed_points
 
-    def split(self, voxels):
-        """ Splits points into Voxels
-        Creates a points list in the order, that corresponds to the given voxel list.
+    def split(self, blocks):
+        """ Splits points into Blocks
+        Creates a points list in the order, that corresponds to the given blocks list.
         """
         points = []
-        for voxel in voxels:
-            x, start_x, end_x = self.xyz['pix'][:, 0], voxel.start[2], voxel.start[2] + voxel.size[2]
-            y, start_y, end_y = self.xyz['pix'][:, 1], voxel.start[1], voxel.start[1] + voxel.size[1]
-            z, start_z, end_z = self.xyz['pix'][:, 2], voxel.start[0], voxel.start[0] + voxel.size[0]
+        for block in blocks:
+            x, start_x, end_x = self.xyz['pix'][:, 0], block.start[2], block.start[2] + block.size[2]
+            y, start_y, end_y = self.xyz['pix'][:, 1], block.start[1], block.start[1] + block.size[1]
+            z, start_z, end_z = self.xyz['pix'][:, 2], block.start[0], block.start[0] + block.size[0]
 
             in_x = start_x <= x <= end_x
             in_y = start_y <= y <= end_y

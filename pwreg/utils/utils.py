@@ -4,10 +4,9 @@ import scipy.io as si
 
 def mat_to_affine(filename):
     """
-    Takes a path to the affine transform mat file written with itk::TransformFileWriter
+    Takes a path to the affine transform *.mat file written with itk::TransformFileWriter
     and returns an affine matrix.
     To apply this matrix to a set of xyz1 points : xyz1@transform .
-    (This is identical to the ants2affine.m matlab function by Anna N.)
     """
     # load and extract data
     trans = si.loadmat(filename)
@@ -22,7 +21,6 @@ def ants_to_affine(antstransform):
     """
     Takes ANTsTransform and returns an affine matrix.
     To apply this matrix to a set of xyz1 points : xyz1@transform .
-    (This is identical to the ants2affine.m matlab function by Anna N.)
     """
     # extract data
     A = antstransform.parameters
@@ -35,7 +33,6 @@ def params_to_affine(A, m_center):
     """
     Takes parameters (A) and fixed_parameters (m_center) of ants transform and returns an affine matrix.
     To apply this matrix to a set of xyz1 points : xyz1@transform .
-    (This is identical to the ants2affine.m matlab function by Anna N.)
     """
     matrix = np.reshape(A[0:9], (3, 3))
     m_translation = A[9:12]
