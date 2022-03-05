@@ -46,3 +46,44 @@ def params_to_affine(A, m_center):
     Minv = np.linalg.inv(M)
     transform = Minv.T
     return transform
+
+
+def nearest_pairs(v1, v2, radius):
+    """
+    Code modified from https://github.com/informatics-isi-edu/synspy > analyze > pair
+    see https://github.com/informatics-isi-edu/synspy/blob/master/LICENSE for more info.
+
+    Find nearest k-dimensional point pairs between v1 and v2 and return via output arrays.
+
+       Inputs:
+         v1: array with first pointcloud with shape (m, k)
+         kdt1: must be cKDTree(v1) for correct function
+         v2: array with second pointcloud with shape (m, k)
+         radius: maximum euclidean distance between points in a pair
+         out1: output adjacency matrix of shape (n,)
+         out2: output adjacency matrix of shape (m,)
+
+       Use greedy algorithm to assign nearest neighbors without
+       duplication of any point in more than one pair.
+
+       Outputs:
+         out1: for each point in kdt1, gives index of paired point from v2 or -1
+         out2: for each point in v2, gives index of paired point from v1 or -1
+
+    """
+    kdt1 = cKDTree(v1)
+    out1 = np.zeros((ve1.shape[0]), dtype=np.int32)
+    out2 = np.zeros((ve2.shape[0]), dtype=np.int32)
+
+    depth = min(max(out1.shape[0], out2.shape[0]), 100)
+    out1[:] = -1
+    out2[:] = -1
+    dx, pairs = kdt1.query(v2, depth, distance_upper_bound=radius)
+    for d in range(depth):
+        for idx2 in np.argsort(dx[:, d]):
+            if dx[idx2, d] < radius:
+                if out2[idx2] == -1 and out1[pairs[idx2, d]] == -1:
+                    out2[idx2] = pairs[idx2, d]
+                    out1[pairs[idx2, d]] = idx2
+
+    return out1, out2
