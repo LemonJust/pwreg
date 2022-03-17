@@ -36,29 +36,46 @@ class FixedPoints(nl.Points):
         """Points are not allowed to move."""
         pass
 
-class ImagePointsView:
-    def __init__(self, img, ptc):
-        self.img = img
-        self.ptc = ptc
 
-    def view_in_napari(self):
+class ImagePointsView:
+    def __init__(self, img_dict, ptc_dict, resolution):
+        """
+        img_dict is a dictionary with core.Image class.
+        ptc_dict is a dictionary with is a core.Points class...
+        """
+        self.imgs = img_dict
+        self.ptcs = ptc_dict
+        self.resolution = resolution
+
+    def view_in_napari(self, img_cm, ptc_cm):
         """
         Display image with the corresponding point cloud.
+        img_cm, ptc_cm : colormap names (str) and colors (str) for display
         """
-        resolution = self.img.resolution
+        # TODO : generate colors if not provided ? maybe with napari.utils.colormaps.label_colormap()
+
         with napari.gui_qt():
             viewer = napari.Viewer()
-            viewer.add_image(self.img.img,
-                             scale=resolution,
-                             name='image',
-                             colormap='grey',
-                             blending='additive')
 
-            viewer.add_layer(FixedPoints(
-                self.ptc.xyz['pix'],
-                ndim=3,
-                size=2,
-                edge_width=1,
-                scale=resolution,
-                name='points',
-                face_color='cyan'))
+            i_ptc = 0
+            for name, ptc in self.ptcs.items():
+                viewer.add_layer(FixedPoints(
+                    ptc.zyx['pix'],
+                    # or this way can use downsampled image if desired ...
+                    # np.round(ptc.zyx['phs'] / self.resolution)
+                    ndim=3,
+                    size=2,
+                    edge_width=1,
+                    scale=self.resolution,
+                    name=name,
+                    face_color=ptc_cm[i_ptc]))
+                i_ptc = i_ptc + 1
+
+            i_img = 0
+            for name, image in self.imgs.items():
+                viewer.add_image(image.img,
+                                 scale=self.resolution,
+                                 name=name,
+                                 colormap=img_cm[i_img],
+                                 blending='additive')
+                i_img = i_img + 1
