@@ -1,13 +1,21 @@
 import json
 import numpy as np
+import pandas as pd
 import random
 import tifffile as tif
 import warnings
 import shutil
-# on wsl:
-import sys
+# on wsl or win:
 
-project_path = '/mnt/d/Code/repos/pwreg'
+import sys
+# TODO : this is only while I'm still working on it actively ...
+import platform
+
+if platform.system() == 'Windows':
+    project_path = 'D:/Code/repos/pwreg'
+else:
+    project_path = '/mnt/d/Code/repos/pwreg'
+
 sys.path.insert(1, f'{project_path}/pwreg')
 from utils.utils import *
 
@@ -123,9 +131,11 @@ class Block:
         # in ZYX order
         self.size = size
         self.idx = idx
+        self.img = img
+
+        # TODO : don't need the rest?
         self.num_blc = num_blc
         self.overlap = overlap
-        self.img = img
 
     def __str__(self):
         return f"start {self.start}\nsize {self.size}\nidx {self.idx}\noverlap {self.overlap}"
@@ -151,28 +161,36 @@ class BlockPair:
         # TODO : there should be a better way to do it...
         self.bp_id = random.randint(0, 10000)
 
-    def register(self, keep_warped=False):
+    def register(self, keep_warped=False, verbose=False):
         """
-        Registers the voxels, keeps the alignment mat.
-        :return:
+        Registers the blocks ( block 2 (blc2) -to-> block 1 (blc1) ).
         """
+        # keep in mind, ants want the resolution in XYZ order
         fixed = ants.from_numpy(self.blc1.crop().astype(float), spacing=self.blc1.img.resolution.tolist())
         moving = ants.from_numpy(self.blc2.crop().astype(float), spacing=self.blc2.img.resolution.tolist())
+        if verbose:
+            print(f'fixed : {fixed}')
+            print(f'moving : {moving}')
         # run ants registration
         reg = ants.registration(fixed=fixed, moving=moving, type_of_transform='Affine',
                                 syn_metric='CC')
-
+        # save ants file just in case ... probably will et rid of it in the future
         copy_of_ants = f'{project_path}/tmp/{self.bp_id}_affine.mat'
         shutil.copyfile(reg['fwdtransforms'][0], copy_of_ants)
-        # TODO : probably don't need to carry 'ants' at all ....
-        self.alignment = {'ants_file': copy_of_ants,
-                          'ants': ants.read_transform(reg['fwdtransforms'][0], dimension=3)}
+        self.alignment = {'ants_file': copy_of_ants}
+
+        # save affine transformation and center
+        # get center in physical units
         center = self.blc2.start * self.blc2.img.resolution
-        self.alignment['affine'] = AffineTransform(ants_to_affine(self.alignment['ants']), center=center)
+        self.alignment['affine'] = AffineTransform(ants_to_affine(ants.read_transform(reg['fwdtransforms'][0],
+                                                                                      dimension=3)), center=center)
+
+        # in case you want to keep the transformed image in memory ( interpolation is set to linear by default )
         if keep_warped:
             self.warped = reg['warpedmovout'].numpy().astype(np.uint16)
 
     def warp(self, interpolator='nearestNeighbor', keep_warped=False):
+        # keep in mind, ants want the resolution in XYZ order
         fixed = ants.from_numpy(self.blc1.crop().astype(float), spacing=self.blc1.img.resolution.tolist())
         moving = ants.from_numpy(self.blc2.crop().astype(float), spacing=self.blc2.img.resolution.tolist())
         warpedimg = ants.apply_transforms(fixed=fixed, moving=moving,
@@ -210,7 +228,7 @@ class AffineTransform:
         """
         # create an object for the class to return
         with open(filename) as json_file:
-            j = json.loads(json_file)
+            j = json.load(json_file)
         af_transform = cls(j['matrix'], center=j['center'])
         return af_transform
 
@@ -228,9 +246,9 @@ class AffineTransform:
 class Points:
     """ Points class represents and manipulates xyz coords. """
 
-    def __init__(self, xyz_arr, units='pix', resolution=None, idx=None):
+    def __init__(self, zyx_arr, units='pix', resolution=None, idx=None):
         """ Create a new point at the origin
-        units : in what units the xyz_arr coordinates are given. Can be 'pix' or 'phs'
+        units : in what units the zyx_arr coordinates are given. Can be 'pix' or 'phs'
         for pixels or physical units respectively.
         """
 
@@ -238,24 +256,24 @@ class Points:
             resolution = [1, 1, 1]
         self.resolution = np.array(resolution)
 
-        self.xyz = {}
+        self.zyx = {}
         if units == 'pix':
-            self.xyz['pix'] = np.array(xyz_arr)
-            self.xyz['phs'] = self.xyz['pix'] * self.resolution
+            self.zyx['pix'] = np.array(zyx_arr)
+            self.zyx['phs'] = self.zyx['pix'] * self.resolution
         elif units == 'phs':
-            self.xyz['phs'] = np.array(xyz_arr)
-            self.xyz['pix'] = np.round(self.xyz['phs'] / self.resolution)
+            self.zyx['phs'] = np.array(zyx_arr)
+            self.zyx['pix'] = np.round(self.zyx['phs'] / self.resolution)
 
             # personal id for each point
-        self.num_points = self.xyz['pix'].shape[0]
+        self.num_points = self.zyx['pix'].shape[0]
         if idx is None:
             self.idx = np.arange(self.num_points)
         else:
-            self.idx = idx
+            self.idx = np.array(idx)
 
     def __repr__(self):
         return f'Number of points : {self.num_points}\nResolution : {self.resolution}\nCoordinates' \
-               f' :\n- pixels\n{self.xyz["pix"]}\n- physical units\n{self.xyz["phs"]}'
+               f' :\n- pixels\n{self.zyx["pix"]}\n- physical units\n{self.zyx["phs"]}'
 
     @classmethod
     def from_json(cls, filename):
@@ -265,8 +283,15 @@ class Points:
         """
         # create an object for the class to return
         with open(filename) as json_file:
-            j = json.loads(json_file)
-        points = cls(j['xyz'], units='phs', resolution=j['resolution'], idx=j['idx'])
+            j = json.load(json_file)
+        points = cls(j['zyx'], units='phs', resolution=j['resolution'], idx=j['idx'])
+        return points
+
+    @classmethod
+    def from_predictions(cls, filename, prob_thr=0.5, resolution=[1, 1, 1], units='pix'):
+        df = pd.read_csv(filename)
+        points = cls(df[['Z', 'Y', 'X']][df["prob"] > prob_thr].to_numpy(),
+                     units=units, resolution=resolution)
         return points
 
     def to_json(self, filename):
@@ -274,35 +299,15 @@ class Points:
         Transform Points object into json format and save as a file.
         """
         j = json.dumps({"resolution": self.resolution.tolist(),
-                        "xyz": self.xyz['phs'].tolist(),
+                        "zyx": self.zyx['phs'].tolist(),
                         "idx": self.idx.tolist()})
 
         with open(filename, 'w') as json_file:
             json_file.write(j)
 
-    def split(self, blocks):
-        """ Splits points into Blocks
-        Creates a points list in the order, that corresponds to the given blocks list.
-        """
-        points = []
-        for block in blocks:
-            x, start_x, end_x = self.xyz['pix'][:, 0], block.start[2], block.start[2] + block.size[2]
-            y, start_y, end_y = self.xyz['pix'][:, 1], block.start[1], block.start[1] + block.size[1]
-            z, start_z, end_z = self.xyz['pix'][:, 2], block.start[0], block.start[0] + block.size[0]
-
-            in_x = start_x <= x <= end_x
-            in_y = start_y <= y <= end_y
-            in_z = start_z <= z <= end_z
-
-            is_inside = np.logical_and(in_z, np.logical_and(in_x, in_y))
-            points.append(Points(self.xyz['phs'][is_inside], units='phs',
-                                 resolution=self.resolution, idx=self.idx[is_inside]))
-
-        return points
-
     def crop(self, mask, units='pix'):
         """
-        Crops a pointcloud: drops everything outside a rectangle mask (in pixels or physical units)
+        Crops a point cloud: drops everything outside a rectangle mask (in pixels or physical units)
         and remembers the parameters of the crop.
         mask : dict with xmin, xmax, ymin, ymax, zmin, zmax optional ( fields can be empty if don't need to crop there).
 
@@ -310,52 +315,110 @@ class Points:
         # calculate the crop
         is_in = np.ones(self.num_points, dtype=bool)
 
-        for ikey, key in enumerate(['xmin', 'ymin', 'zmin']):
-            if key in mask and key is not None:
+        for ikey, key in enumerate(['zmin', 'ymin', 'xmin']):
+            if key in mask and mask[key] is not None:
                 is_in = np.logical_and(is_in,
-                                       mask[key] < self.xyz[units][:, ikey])
-        for ikey, key in enumerate(['xmax', 'ymax', 'zmax']):
-            if key in mask and key is not None:
+                                       mask[key] < self.zyx[units][:, ikey])
+        for ikey, key in enumerate(['zmax', 'ymax', 'xmax']):
+            if key in mask and mask[key] is not None:
                 is_in = np.logical_and(is_in,
-                                       self.xyz[units][:, ikey] < mask[key])
+                                       self.zyx[units][:, ikey] < mask[key])
         # apply crop
-        xyz = self.xyz[units][is_in, :]
+        zyx = self.zyx[units][is_in, :]
         idx = self.idx[is_in]
 
-        points = Points(xyz, units=units, resolution=self.resolution, idx=idx)
+        points = Points(zyx, units=units, resolution=self.resolution, idx=idx)
         return points
 
     def recenter(self, center, units='pix'):
         """
-        Sets the zero to center ( array of 3 elements in xyz order ).
+        Sets the zero to center ( array of 3 elements in zyx order ).
         Center needs to be in pixels or the same physical units as the pointcloud.
         """
-        center - np.array(center)
-        xyz = self.xyz[units] - center
+        center = np.array(center)
+        zyx = self.zyx[units] - center
 
-        points = Points(xyz, units=units, resolution=self.resolution, idx=self.idx)
+        points = Points(zyx, units=units, resolution=self.resolution, idx=self.idx)
         return points
 
     def transform(self, transform, units='phs'):
         """
         Applies transform to points in given units , default to physical.
         transform : AffineTransform, a matrix and a center representing an affine transform in 3D.
-        In such format, that to apply transform matrix to a set of xyz1 points : xyz1@transform.matrix .
+        In such format, that to apply transform matrix to a set of zyx1 points : zyx1@transform.matrix .
 
         Returns Points with the same type of dta as the original, but coordinates transformed.
         """
 
-        def to_xyz1(xyz_arr):
-            n_points = xyz_arr.shape[0]
+        def to_zyx1(zyx_arr):
+            n_points = zyx_arr.shape[0]
             ones = np.ones(n_points)
-            return np.c_[xyz_arr, ones[:, np.newaxis]]
+            return np.c_[zyx_arr, ones[:, np.newaxis]]
 
-        xyz = self.xyz[units] - transform.center
-        xyz1 = to_xyz1(xyz)
-        transformed_xyz1 = xyz1 @ transform.matrix
-        transformed_xyz = transformed_xyz1[:, 0:3] + transform.center
+        zyx = self.zyx[units] - transform.center
+        zyx1 = to_zyx1(zyx)
+        transformed_zyx1 = zyx1 @ transform.matrix
+        transformed_zyx = transformed_zyx1[:, 0:3] + transform.center
 
-        points = Points(transformed_xyz, units=units, resolution=self.resolution, idx=self.idx)
+        points = Points(transformed_zyx, units=units, resolution=self.resolution, idx=self.idx)
+        return points
+
+    def fit_block(self, blc, padding=[0, 0, 0]):
+        """
+        Takes a ptc and crops it to block.
+        padding : in pixels (in the pixel space of the block)
+        """
+        # get mask in physical units :
+        start = (blc.start - padding) * blc.img.resolution
+        end = (blc.start + blc.size + padding) * blc.img.resolution
+        mask = {'zmin': start[0], 'zmax': end[0],
+                'ymin': start[1], 'ymax': end[1],
+                'xmin': start[2], 'xmax': end[2]}
+
+        return self.crop(mask, units='phs')
+
+    def split(self, blocks, padding=[0, 0, 0]):
+        """ Splits points into Blocks
+        Creates a points list in the order, that corresponds to the given blocks list.
+        """
+        points = []
+        for block in blocks:
+            points.append(self.fit_block(block, padding))
+        return points
+
+    @classmethod
+    def concat(cls, ptc_list):
+        """
+        combines point clouds in ptc_list into one, concatenating the coordinates and idx.
+        all point clouds need to have the same resolution.
+        padding : zyx padding in pixels or phs
+        """
+
+        resolution = ptc_list[0].resolution
+
+        for i_ptc, ptc in enumerate(ptc_list):
+            if i_ptc == 0:
+                zyx = ptc.zyx['phs']
+                idx = ptc.idx
+            else:
+                assert np.all(resolution == ptc.resolution), "Resolution should be the same for all point clouds"
+                zyx = np.r_[zyx, ptc.zyx['phs']]
+                idx = np.r_[idx, ptc.idx]
+
+        points = cls(zyx, units='phs', resolution=resolution, idx=idx)
+        return points
+
+    def pw_transform(self, blockpairs):
+        """
+        Piece-wise transforms the ptc according to each block alignment, then splits points into Blocks in the fixed space.
+        Creates a points list in the order, that corresponds to the given blockpair list.
+        """
+        points = []
+        for bp in blockpairs:
+            # transform already takes the top left corner into account (center)
+            ptc = self.transform(bp.alignment['affine'], units='phs')
+            points.append(ptc)
+
         return points
 
 
@@ -437,7 +500,7 @@ class PointsPair:
                      for ptc, blockpair in zip(split_ptc2, self.blockpairs)]
 
         # construct the pair matrix
-        # TODO: maybe mak it sparse ???
+        # TODO: maybe make it sparse ???
         self.pairs = zero_pairs()
 
         # pair the elementary point clouds
@@ -457,3 +520,23 @@ class PointsPair:
         # TODO : unfinished
         pairs, votes = np.unique(self.pairs, return_counts=True, axis=1)
         num_candidates = [len(candidates) for candidates in pairs]
+
+
+class BlockPtc:
+    def __init__(self, blcs, ptc):
+        self.blcs = blcs
+        self.ptc = ptc
+
+    def crop_to_blc(self, blc, ptc, padding=[0, 0, 0]):
+        """
+        Takes a ptc and crops it to block.
+        padding : in pixels (in the pixel space of the block)
+        """
+        # get mask in physical units :
+        start = (blc.start - padding) * blc.img.resolution
+        end = (blc.start + padding) * blc.img.resolution
+        mask = {'zmin': start[0], 'zmax': end[0],
+                'ymin': start[1], 'ymax': end[1],
+                'xmin': start[2], 'xmax': end[2]}
+
+        #
