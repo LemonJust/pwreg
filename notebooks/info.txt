@@ -1,0 +1,4 @@
+Fixed mask : {'zmin': 51, 'zmax': 169, 'xmin': None, 'xmax': None, 'ymin': None, 'ymax': None}
+Moving mask : {'zmin': 51, 'zmax': 165, 'xmin': None, 'xmax': None, 'ymin': None, 'ymax': None}
+Padding for visualisation : 0
+Info : Global alignment, after cutting 

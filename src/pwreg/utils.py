@@ -1,20 +1,23 @@
 import numpy as np
-import scipy.io as si
+import json
+import scipy.ndimage as ndi
+
+# import scipy.io as si
 
 
-def mat_to_affine(filename):
-    """
-    Takes a path to the affine transform *.mat file written with itk::TransformFileWriter
-    and returns an affine matrix.
-    To apply this matrix to a set of xyz1 points : xyz1@transform .
-    """
-    # load and extract data
-    trans = si.loadmat(filename)
-    names = list(trans.keys())
-    A = trans[names[0]]
-    m_center = trans[names[1]]
-
-    return params_to_affine(A, m_center)
+# def mat_to_affine(filename):
+#     """
+#     Takes a path to the affine transform *.mat file written with itk::TransformFileWriter
+#     and returns an affine matrix.
+#     To apply this matrix to a set of xyz1 points : xyz1@transform .
+#     """
+#     # load and extract data
+#     trans = si.loadmat(filename)
+#     names = list(trans.keys())
+#     A = trans[names[0]]
+#     m_center = trans[names[1]]
+#
+#     return params_to_affine(A, m_center)
 
 
 def ants_to_affine(antstransform):
@@ -56,7 +59,7 @@ def nearest_pairs(v1, v2, radius):
     Find nearest k-dimensional point pairs between v1 and v2 and return via output arrays.
 
        Inputs:
-         v1: array with first pointcloud with shape (m, k)
+         v1: array with first pointcloud with shape (n, k)
          kdt1: must be cKDTree(v1) for correct function
          v2: array with second pointcloud with shape (m, k)
          radius: maximum euclidean distance between points in a pair
@@ -87,3 +90,65 @@ def nearest_pairs(v1, v2, radius):
                     out1[pairs[idx2, d]] = idx2
 
     return out1, out2
+
+
+def local_maxima_3D(data, order=1):
+    """Detects local maxima in a 3D array
+    From : https://stackoverflow.com/questions/55453110/how-to-find-local-maxima-of-3d-array-in-python
+
+    Parameters
+    ---------
+    data : 3d ndarray
+    order : int
+        How many points on each side to use for the comparison
+
+    Returns
+    -------
+    coords : ndarray
+        coordinates of the local maxima
+    values : ndarray
+        values of the local maxima
+    """
+    size = 1 + 2 * order
+    footprint = np.ones((size, size, size))
+    footprint[order, order, order] = 0
+
+    filtered = ndi.maximum_filter(data, footprint=footprint)
+    mask_local_maxima = data > filtered
+    coords = np.asarray(np.where(mask_local_maxima)).T
+    values = data[mask_local_maxima]
+
+    return coords, values
+
+
+# SAVING AS JSON :
+# TODO : Write custom JSONEncoder to make class JSON serializable (???)
+
+def to_json(objs, filename):
+    """
+    Writes an object, or list of objects as json file.
+    The objects should have method to_dict()
+    """
+    if isinstance(objs, list):
+        j = json.dumps([obj.to_dict() for obj in objs])
+    else:
+        j = json.dumps(objs.to_dict())
+
+    with open(filename, 'w') as json_file:
+        json_file.write(j)
+
+
+def from_json(cls, filename):
+    """
+    Loads an object, or list of objects of class cls from json file.
+    The objects should have method from_dict()
+    """
+    with open(filename) as json_file:
+        j = json.load(json_file)
+
+    if isinstance(j, list):
+        objs = [cls.from_dict(d) for d in j]
+    else:
+        objs = cls.from_dict(j)
+
+    return objs

@@ -1,17 +1,6 @@
 import numpy as np
 import tifffile as tif
-
-import sys
-# TODO : this is only while I'm still working on it actively ...
-import platform
-
-if platform.system() == 'Windows':
-    project_path = 'D:/Code/repos/pwreg'
-else:
-    project_path = '/mnt/d/Code/repos/pwreg'
-
-sys.path.insert(1, f'{project_path}/pwreg')
-from core.core import *
+from .core import *
 
 
 class BlockView:
@@ -45,9 +34,48 @@ class BlockView:
 
     def write_volume(self, filename):
         volume = self.fill_volume()
-        # TODO : fix output - now writes ctx instead of zyx channels ..
-        #  not sure how to fix .. it seems to ignore the metadata 'axes' ... ( related to wsl maybe ? )
-        tif.imsave(filename, volume.astype(np.uint16), imagej=True)
+
+        # a trick to make it write color channels correctly:
+        tif.imsave(filename, np.expand_dims(volume, axis=1).astype(np.uint16), imagej=True)
+
+
+class BlockPairView:
+    """
+    Visualises block pairs:
+    creates 3D composite image with individual blocks separated by a 3D padding.
+    """
+
+    def __init__(self, pairs, padding):
+        self.pairs = pairs
+        self.padding = padding
+
+    def zero_volume(self):
+        """
+        Creates zero volume of size that includes visualisation padding. To match the fixed image.
+        :return: np.ndarray of zeroes
+        """
+        num_blc = self.pairs[0].blc1.num_blc
+        view_size = self.pairs[0].blc1.size * num_blc + self.padding * (num_blc - 1)
+        return np.zeros(view_size)
+
+    def fill_volume(self, interpolator):
+        volume = self.zero_volume()
+
+        for pair in self.pairs:
+            block = pair.blc1
+            z0, y0, x0 = (block.size + self.padding) * block.idx
+            z1, y1, x1 = (block.size + self.padding) * block.idx + block.size
+
+            volume[z0:z1, y0:y1, x0:x1] = pair.warp(interpolator=interpolator).img
+
+        return volume
+
+    def write_volume(self, filename, interpolator='nearestNeighbor'):
+
+        volume = self.fill_volume(interpolator)
+
+        # a trick to make it write color channels correctly:
+        tif.imsave(filename, np.expand_dims(volume, axis=1).astype(np.uint16), imagej=True)
 
 
 class PointsBlockView:
@@ -83,41 +111,3 @@ class PointsBlockView:
     def to_json(self, filename):
         full_ptc = self.fill_ptc()
         full_ptc.to_json(filename)
-
-
-class BlockPairView:
-    """
-    Visualises block pairs:
-    creates 3D composite image with individual blocks separated by a 3D padding.
-    """
-
-    def __init__(self, pairs, padding):
-        self.pairs = pairs
-        self.padding = padding
-
-    def zero_volume(self):
-        """
-        Creates zero volume of size that includes visualisation padding. To match the fixed image.
-        :return: np.ndarray of zeroes
-        """
-        num_blc = self.pairs[0].blc1.num_blc
-        view_size = self.pairs[0].blc1.size * num_blc + self.padding * (num_blc - 1)
-        return np.zeros(view_size)
-
-    def fill_volume(self):
-        volume = self.zero_volume()
-
-        for pair in self.pairs:
-            block = pair.blc1
-            z0, y0, x0 = (block.size + self.padding) * block.idx
-            z1, y1, x1 = (block.size + self.padding) * block.idx + block.size
-            if pair.warped is not None:
-                volume[z0:z1, y0:y1, x0:x1] = pair.warped
-            else:
-                volume[z0:z1, y0:y1, x0:x1] = pair.warp()
-
-        return volume
-
-    def write_volume(self, filename):
-        volume = self.fill_volume()
-        tif.imsave(filename, volume.astype(np.uint16), shape=volume.shape, metadata={'axes': 'ZYX'}, imagej=True)

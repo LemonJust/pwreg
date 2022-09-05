@@ -124,3 +124,13 @@ dmypy.json
 .pyre/
 
 *.tif
+*.json
+
+tmp/
+
+*.pkl
+
+pwreg/.idea/
+.idea/
+
+src/pwreg/.idea/inspectionProfiles/
